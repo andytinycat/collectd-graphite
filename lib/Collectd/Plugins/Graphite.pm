@@ -41,10 +41,31 @@ In your collectd config:
     	  Prefix "servers"
     	  Host   "graphite.example.com"
     	  Port   "2003"
-          DifferentiateCounters "true"
     	</Plugin>
     </Plugin>
-    
+   
+To have COUNTER datatypes sent as differences between the previous
+value and the current value (which is useful for graphing things
+where you care about the change in counter value, rather than the
+value itself), use the following configuration:
+
+    <LoadPlugin "perl">
+        Globals true
+    </LoadPlugin>
+
+    <Plugin "perl">
+      BaseName "Collectd::Plugins"
+      LoadPlugin "Graphite"
+
+        <Plugin "Graphite">
+          Buffer "256000"
+          Prefix "servers"
+          Host   "graphite.example.com"
+          Port   "2003"
+          DifferentiateCounters "true"
+        </Plugin>
+    </Plugin>
+ 
 =head1 AUTHOR
 
 Joe Miller, C<< <joeym at joeym.net> >>
@@ -163,7 +184,6 @@ sub graphite_write {
                 # Shared data; lock
                 lock %prev_value;
                 my $new_value = $vl->{'values'}->[$i];
-                plugin_log(LOG_INFO, "diff_counters: $graphite_path new_value = $new_value");
 
                 # value can apparently be undef, according to the Collectd Perl documentation
                 if (defined $prev_value{$graphite_path} and defined $new_value) {
@@ -180,7 +200,6 @@ sub graphite_write {
                         }
                     } else {
                         $vl->{'values'}->[$i] = $new_value - $old_value;
-                        plugin_log(LOG_INFO, "diff_counters: $graphite_path old_value = $old_value");
                     }
                 }
                 $prev_value{$graphite_path} = $new_value if defined $new_value; 
