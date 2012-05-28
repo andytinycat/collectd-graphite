@@ -4,6 +4,8 @@ use strict;
 use warnings;
 
 use IO::Socket;
+use threads;
+use threads::shared;
 
 use Collectd qw( :all );
 
@@ -39,6 +41,7 @@ In your collectd config:
     	  Prefix "servers"
     	  Host   "graphite.example.com"
     	  Port   "2003"
+          DifferentiateCounters "true"
     	</Plugin>
     </Plugin>
     
@@ -87,11 +90,15 @@ Copyright 2011 Joe Miller.
 my $buff = '';
 my $sock_timeout  = 10;
 
+# Shared between all Perl threads
+my %prev_value :shared;
+
 # config vars.  These can be overridden in collectd.conf
 my $buffer_size   = 8192;
 my $prefix        = 'collectd';
 my $graphite_host = 'localhost';
 my $graphite_port = 2003;
+my $diff_counters = 0;
 
 
 sub graphite_config {
@@ -109,6 +116,14 @@ sub graphite_config {
             $graphite_host = $val;
         } elsif ( $key =~ /port/i ) {
             $graphite_port = $val;
+        } elsif ( $key =~ /differentiatecounters/i ) {
+            if ($val =~ /true/i) {
+                $diff_counters = 1;
+                plugin_log(LOG_INFO, "collectd-graphite: DifferentiateCounters set to true");
+		        plugin_log(LOG_INFO, "collectd-graphite: DS_TYPE_COUNTER types will be sent as differences from previous value");
+            } else {
+                $diff_counters = 0;
+            }
         }
     }
 
@@ -141,7 +156,37 @@ sub graphite_write {
             
         # convert any spaces that may have snuck in
         $graphite_path =~ s/\s+/_/g;
-      
+    
+        # Send difference between previous + current value for counters/derives 
+        if ($diff_counters and $ds->[$i]->{'type'} == DS_TYPE_COUNTER) { 
+            {
+                # Shared data; lock
+                lock %prev_value;
+                my $new_value = $vl->{'values'}->[$i];
+                plugin_log(LOG_INFO, "diff_counters: $graphite_path new_value = $new_value");
+
+                # value can apparently be undef, according to the Collectd Perl documentation
+                if (defined $prev_value{$graphite_path} and defined $new_value) {
+                    my $old_value = $prev_value{$graphite_path};
+
+                    # Overflowed - return value wrapped around max
+                    if ($old_value > $new_value) {
+                        my $max = $vl->{'values'}->[$i] = $ds->[$i]->{'max'};
+                        my $min = $vl->{'values'}->[$i] = $ds->[$i]->{'min'};
+                        if (defined $max and defined $min) {
+                            $vl->{'values'}->[$i] = ($max - $old_value) + ($new_value - $min); 
+                        } else {
+                            $vl->{'values'}->[$i] = undef;
+                        }
+                    } else {
+                        $vl->{'values'}->[$i] = $new_value - $old_value;
+                        plugin_log(LOG_INFO, "diff_counters: $graphite_path old_value = $old_value");
+                    }
+                }
+                $prev_value{$graphite_path} = $new_value if defined $new_value; 
+            }
+        }
+ 
         $buff .= sprintf  "%s %s %d\n",
             $graphite_path,
             $vl->{'values'}->[$i],

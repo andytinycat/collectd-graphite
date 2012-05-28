@@ -119,6 +119,33 @@ Add the following to your collectd.conf:
 		</Plugin>
 	</Plugin>
 
+Collectd COUNTER types are an incrementing counter,
+and often for graphing in Graphite we're interested
+in the difference between the previous value and the
+current value - for example, emails sent since the
+last datapoint was taken.
+
+To have COUNTER types report their value as the
+difference between the previous value and the new
+value, change the configuration to the following:
+
+    <LoadPlugin "perl">
+        Globals true
+    </LoadPlugin>
+
+    <Plugin "perl">
+      BaseName "Collectd::Plugins"
+      LoadPlugin "Graphite"
+
+        <Plugin "Graphite">
+          Buffer "256000"
+          Prefix "servers"
+          Host   "graphite.example.com"
+          Port   "2003"
+          DifferentiateCounters "true"
+        </Plugin>
+    </Plugin>
+ 
 
 NETWORK TRAFFIC
 ---------------
